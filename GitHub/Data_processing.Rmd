@@ -1,0 +1,79 @@
+---
+title: "Введение в автоматизацию обработки данных на R"
+author: "Филимонова Ирина"
+date: "`r Sys.Date()`"
+output:
+  word_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+``````{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, error = FALSE)
+
+library(tidyverse)
+library(flextable)
+
+
+```
+
+# Загрузка и подготовка данных
+
+```{r}
+data <- read_delim("data_tsv.tsv")
+#Преобразуем строковые переменные в факторы
+data <- data  |> 
+  mutate(across(where(is.character), \(x) as.factor(x))) 
+
+glimpse(data) # структура данных
+summary(data) # сводная статистика по переменным
+```
+
+Заменим NA значения в категории "Группа крови" на "Нет данных". Также в лабораторных анализах мы видим отрицательные значения у количественных переменных, заменим их на NA.
+
+```{r}
+data <- data |>
+  mutate(`Группа крови` = `Группа крови` |> fct_na_value_to_level("Нет данных")) |> 
+  mutate(across(where(is.numeric), \(x) if_else(x <= 0, NA, x)))
+```
+
+Переименуем коды визитов на их названия: E1 = Визит 1, E2 = Визит 2
+
+```{r}
+replacement <- c('_E1' = ' Визит 1', '_E2' = ' Визит 2')
+data <- data |>
+  rename_with(\(x) str_replace_all(x, replacement))
+```
+
+Список статистик для количественных переменных
+
+```{r}
+statistics <- list(
+  `Количество субъектов` = \(x) length(x) |> as.character(),
+  `Есть данные` = \(x) sum(!is.na(x)) |> as.character(),
+  `Нет данных` = \(x) sum(is.na(x)) |> as.character(),
+  `Среднее значение` = \(x) ifelse(sum(!is.na(x)) == 0, "Н/П", mean(x, na.rm = TRUE) |> round(2) |> as.character()),
+  `Стандартное отклонение` = \(x) ifelse(sum(!is.na(x)) == 0, "Н/П", sd(x, na.rm = TRUE) |> round(2) |> as.character()),
+  `95% ДИ для среднего` = \(x) sd(x, na.rm = TRUE) |> round(2) |> as.character(),
+  `Мин. - макс.` = \(x) ifelse(sum(!is.na(x)) == 0, "Н/П", paste0(min(x, na.rm = TRUE) |> round(2), " - ", max(x, na.rm = TRUE) |> round(2))),
+  `Медиана` = \(x) ifelse(sum(!is.na(x)) == 0, "Н/П", median(x, na.rm = TRUE) |> round(2) |> as.character()),
+  `Q1 - Q3` = \(x) ifelse(sum(!is.na(x)) == 0, "Н/П", paste0(quantile(x, 0.25, na.rm = TRUE) |> round(2), " - ", quantile(x, 0.75, na.rm = TRUE) |> round(2)))
+)
+```
+
+# Сводная таблица описательных статистик для количественных переменных
+
+```{r}
+data |> 
+  select(`Группа`, where(is.numeric)) |>
+  group_by(`Группа`) |>
+  summarise(across(where(is.numeric), statistics)) |>
+  pivot_longer(!`Группа`) |>
+  pivot_wider(names_from = `Группа`, values_from = value) |> 
+  separate(name, into = c("Переменная", "Статистика"), sep = "_") |> 
+  flextable() |> 
+  theme_vanilla() |> 
+  merge_v("Переменная") |> 
+  align(align = "center", part = "all") |>
+  set_table_properties(width = 1, layout = "autofit")
+```

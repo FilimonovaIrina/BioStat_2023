@@ -40,12 +40,12 @@ data <- data |>
 Переименуем коды визитов на их названия: E1 = Визит 1, E2 = Визит 2
 
 ```{r}
-replacement <- c('_E1' = ' Визит 1', '_E2' = ' Визит 2')
+replacement <- c('_E1' = '/Визит 1', '_E2' = '/Визит 2')
 data <- data |>
   rename_with(\(x) str_replace_all(x, replacement))
 ```
 
-Список статистик для количественных переменных
+# Список статистик для количественных переменных
 
 ```{r}
 statistics <- list(
@@ -61,7 +61,7 @@ statistics <- list(
 )
 ```
 
-# Сводная таблица описательных статистик для количественных переменных
+## Сводная таблица описательных статистик для количественных переменных (возраст, рост)
 
 ```{r}
 data |> 
@@ -71,9 +71,33 @@ data |>
   pivot_longer(!`Группа`) |>
   pivot_wider(names_from = `Группа`, values_from = value) |> 
   separate(name, into = c("Переменная", "Статистика"), sep = "_") |> 
+  filter(`Переменная` %in% c("Возраст", "Рост")) |> 
   flextable() |> 
   theme_vanilla() |> 
   merge_v("Переменная") |> 
   align(align = "center", part = "all") |>
   set_table_properties(width = 1, layout = "autofit")
+```
+
+## Сводная таблица описательных статистик для лабораторых показателей крови по визитам
+
+```{r}
+data |> 
+  select(`Группа`, where(is.numeric)) |>
+  group_by(`Группа`) |>
+  summarise(across(where(is.numeric), statistics)) |>
+  pivot_longer(!`Группа`) |>
+  pivot_wider(names_from = `Группа`, values_from = value) |> 
+  separate(name, into = c("Переменная", "Статистика"), sep = "_") |> 
+  filter(!(`Переменная` %in% c("Возраст", "Рост"))) |> 
+  separate(`Переменная`, into = c("Переменная", "Визит"), sep = "/") |> 
+  pivot_wider(names_from = `Визит`, values_from = c(`Группа 1`, `Группа 2`), names_glue = "{`Визит`}_{.value}") |> 
+  relocate(`Визит 1_Группа 2`, .before = `Визит 2_Группа 1`) |> 
+  flextable() |> 
+  theme_vanilla() |> 
+  merge_v("Переменная") |> 
+  separate_header() |> 
+  align(align = "center", part = "all") |>
+  set_table_properties(width = 1, layout = "autofit") |> 
+  bold(part = "header")
 ```

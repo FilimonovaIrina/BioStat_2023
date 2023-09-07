@@ -13,7 +13,7 @@ knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, error = FAL
 
 library(tidyverse)
 library(flextable)
-
+library (scales)
 
 ```
 
@@ -43,6 +43,11 @@ data <- data |>
 replacement <- c('_E1' = '/Визит 1', '_E2' = '/Визит 2')
 data <- data |>
   rename_with(\(x) str_replace_all(x, replacement))
+```
+
+Изменим порядок уровней переменной Группа крови.
+```{r}
+data$`Группа крови` <- factor (data$`Группа крови`, levels =c("O (I)", "A (II)", "B (III)", "AB (IV)", "Нет данных"))
 ```
 
 # Список статистик для количественных переменных
@@ -93,6 +98,41 @@ data |>
   separate(`Переменная`, into = c("Переменная", "Визит"), sep = "/") |> 
   pivot_wider(names_from = `Визит`, values_from = c(`Группа 1`, `Группа 2`), names_glue = "{`Визит`}_{.value}") |> 
   relocate(`Визит 1_Группа 2`, .before = `Визит 2_Группа 1`) |> 
+  flextable() |> 
+  theme_vanilla() |> 
+  merge_v("Переменная") |> 
+  separate_header() |> 
+  align(align = "center", part = "all") |>
+  set_table_properties(width = 1, layout = "autofit") |> 
+  bold(part = "header")
+```
+
+# Сводная таблица описательных статистик для категориальных переменных
+
+```{r}
+statistics_cat <- function(var){
+  label <- rlang::englue("{{var}}")
+  
+  data |> 
+  select(`Группа`, {{var}}) |>
+  count(`Группа`, {{var}}) |> 
+  group_by(`Группа`) |>
+  mutate(`% по группе` = percent((n / sum(n)), 1)) |> 
+  ungroup() |> 
+  mutate(`% по выборке` = percent((n / sum(n)), 1)) |> 
+  pivot_wider(names_from = `Группа`, values_from = c(n, `% по группе`, `% по выборке`)) |> 
+  mutate(`Переменная` = label) |> 
+  relocate(`Переменная`, .before = 1) |> 
+  rename("Категория" = {{var}}) 
+}
+```
+
+```{r}
+data_cat <- bind_rows(statistics_cat(`Пол`), statistics_cat(`Группа крови`))
+```
+
+```{r}
+data_cat |> 
   flextable() |> 
   theme_vanilla() |> 
   merge_v("Переменная") |> 

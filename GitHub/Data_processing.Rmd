@@ -8,7 +8,7 @@ editor_options:
   chunk_output_type: console
 ---
 
-``````{r setup, include=FALSE}
+```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, error = FALSE)
 
 library(tidyverse)
@@ -20,16 +20,18 @@ library (scales)
 # Загрузка и подготовка данных
 
 ```{r}
-data <- read_delim("data_tsv.tsv")
-#Преобразуем строковые переменные в факторы
+data <- read_delim("https://stepik.org/media/attachments/course/122402/data_tsv.tsv")
+
+glimpse(data) # структура данных
+
+# Преобразуем строковые переменные в факторы
 data <- data  |> 
   mutate(across(where(is.character), \(x) as.factor(x))) 
 
-glimpse(data) # структура данных
 summary(data) # сводная статистика по переменным
 ```
 
-Заменим NA значения в категории "Группа крови" на "Нет данных". Также в лабораторных анализах мы видим отрицательные значения у количественных переменных, заменим их на NA.
+Заменим NA значения в переменной Группа крови на "Нет данных". Также в лабораторных анализах мы видим отрицательные значения у количественных переменных, заменим их на NA.
 
 ```{r}
 data <- data |>
@@ -46,13 +48,17 @@ data <- data |>
 ```
 
 Изменим порядок уровней переменной Группа крови.
+
 ```{r}
 data$`Группа крови` <- factor (data$`Группа крови`, levels =c("O (I)", "A (II)", "B (III)", "AB (IV)", "Нет данных"))
 ```
 
-# Список статистик для количественных переменных
+# Сводная таблица описательных статистик 
+
+Таблица описательных статистик для количественных переменных (возраст, рост)
 
 ```{r}
+# Список статистик для количественных переменных
 statistics <- list(
   `Количество субъектов` = \(x) length(x) |> as.character(),
   `Есть данные` = \(x) sum(!is.na(x)) |> as.character(),
@@ -64,27 +70,56 @@ statistics <- list(
   `Медиана` = \(x) ifelse(sum(!is.na(x)) == 0, "Н/П", median(x, na.rm = TRUE) |> round(2) |> as.character()),
   `Q1 - Q3` = \(x) ifelse(sum(!is.na(x)) == 0, "Н/П", paste0(quantile(x, 0.25, na.rm = TRUE) |> round(2), " - ", quantile(x, 0.75, na.rm = TRUE) |> round(2)))
 )
-```
 
-## Сводная таблица описательных статистик для количественных переменных (возраст, рост)
-
-```{r}
-data |> 
+data_num <- data |> 
   select(`Группа`, where(is.numeric)) |>
   group_by(`Группа`) |>
   summarise(across(where(is.numeric), statistics)) |>
   pivot_longer(!`Группа`) |>
   pivot_wider(names_from = `Группа`, values_from = value) |> 
   separate(name, into = c("Переменная", "Статистика"), sep = "_") |> 
-  filter(`Переменная` %in% c("Возраст", "Рост")) |> 
+  filter(`Переменная` %in% c("Возраст", "Рост"))
+```
+
+Таблица описательных статистик для категориальных переменных
+
+```{r}
+statistics_cat <- function(var){
+  label <- rlang::englue("{{var}}")
+
+  data |> 
+  select(`Группа`, {{var}}) |>
+  count(`Группа`, {{var}}) |> 
+  group_by(`Группа`) |>
+  mutate(`% по группе` = percent((n / sum(n)), 1)) |> 
+  ungroup() |> 
+  mutate(`% по выборке` = percent((n / sum(n)), 1)) |>
+  mutate(n = as.character(n)) |> 
+  pivot_longer(!c(`Группа`, {{var}})) |> 
+  pivot_wider(names_from = `Группа`, values_from = value) |> 
+  mutate(`Переменная` = label) |> 
+  relocate(`Переменная`, .before = 1) |> 
+  rename("Статистика" =  name) |> 
+  rename("Категория" = {{var}}) 
+}
+
+data_cat <- bind_rows(statistics_cat(`Пол`), statistics_cat(`Группа крови`))
+```
+
+Объединим две таблицы описательных статистик для количественных и категориальных переменных
+
+```{r}
+bind_rows(data_num, data_cat) |> 
+  relocate(`Категория`, .before = `Статистика`) |> 
   flextable() |> 
-  theme_vanilla() |> 
-  merge_v("Переменная") |> 
+  theme_vanilla() |>
+  merge_v(c("Переменная", "Категория")) |> 
+  merge_h_range(i = ~`Переменная` %in% c("Возраст", "Рост"), j1 = "Переменная", j2 = "Категория") |> 
   align(align = "center", part = "all") |>
   set_table_properties(width = 1, layout = "autofit")
 ```
 
-## Сводная таблица описательных статистик для лабораторых показателей крови по визитам
+# Сводная таблица описательных статистик для лабораторых показателей крови по визитам
 
 ```{r}
 data |> 
@@ -98,41 +133,6 @@ data |>
   separate(`Переменная`, into = c("Переменная", "Визит"), sep = "/") |> 
   pivot_wider(names_from = `Визит`, values_from = c(`Группа 1`, `Группа 2`), names_glue = "{`Визит`}_{.value}") |> 
   relocate(`Визит 1_Группа 2`, .before = `Визит 2_Группа 1`) |> 
-  flextable() |> 
-  theme_vanilla() |> 
-  merge_v("Переменная") |> 
-  separate_header() |> 
-  align(align = "center", part = "all") |>
-  set_table_properties(width = 1, layout = "autofit") |> 
-  bold(part = "header")
-```
-
-# Сводная таблица описательных статистик для категориальных переменных
-
-```{r}
-statistics_cat <- function(var){
-  label <- rlang::englue("{{var}}")
-  
-  data |> 
-  select(`Группа`, {{var}}) |>
-  count(`Группа`, {{var}}) |> 
-  group_by(`Группа`) |>
-  mutate(`% по группе` = percent((n / sum(n)), 1)) |> 
-  ungroup() |> 
-  mutate(`% по выборке` = percent((n / sum(n)), 1)) |> 
-  pivot_wider(names_from = `Группа`, values_from = c(n, `% по группе`, `% по выборке`)) |> 
-  mutate(`Переменная` = label) |> 
-  relocate(`Переменная`, .before = 1) |> 
-  rename("Категория" = {{var}}) 
-}
-```
-
-```{r}
-data_cat <- bind_rows(statistics_cat(`Пол`), statistics_cat(`Группа крови`))
-```
-
-```{r}
-data_cat |> 
   flextable() |> 
   theme_vanilla() |> 
   merge_v("Переменная") |> 

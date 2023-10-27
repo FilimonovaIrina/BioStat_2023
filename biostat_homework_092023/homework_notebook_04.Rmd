@@ -1,0 +1,443 @@
+---
+title: "automatization_notebook_04"
+output: word_document
+date: "`r Sys.Date()`"
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, error = FALSE)
+
+library(tidyverse)
+library(broom)
+library(flextable)
+library(beeswarm)
+library (scales)
+library(ggcorrplot)
+
+```
+
+# Чтение данных
+
+В вашем варианте нужно использовать датасет healthcare-dataset-stroke-data.
+
+```{r}
+df <- read_csv("data/raw/healthcare-dataset-stroke-data.csv")
+
+```
+
+# Выведите общее описание данных
+
+```{r}
+glimpse(df) # структура данных
+
+```
+
+# Очистка данных
+
+1) Уберите переменные, в которых пропущенных значений больше 20% или уберите субъектов со слишком большим количеством пропущенных значений. Или совместите оба варианта. Напишите обоснование, почему вы выбрали тот или иной вариант:
+
+**Обоснование**:  в анализируемом наборе данных всего 2 переменных с пропущенными значениями, из них в переменной smoking_status 30% пропущенных значений. Таким образом, мы можем убрать данную переменную и сохранить всех субъектов.
+
+2) Переименуйте переменные в человекочитаемый вид (что делать с пробелами в названиях?);
+
+3) В соответствии с описанием данных приведите переменные к нужному типу (numeric или factor);
+
+4) Отсортируйте данные по возрасту по убыванию;
+
+5) Сохраните в файл outliers.csv субъектов, которые являются выбросами (например, по правилу трёх сигм) — это необязательное задание со звёздочкой;
+
+6) Присвойте получившийся датасет переменной "cleaned_data".
+
+```{r}
+df <- df  |> 
+  # приведение переменных к нужному типу
+  mutate(across(where(is.character) & !bmi, \(x) as.factor(x))) |> 
+  mutate(across(c(hypertension, heart_disease, stroke), \(x) factor(recode(x, 
+                                                      "0" = "No",
+                                                      "1" = "Yes")))) |>
+  mutate(bmi = as.numeric(if_else(bmi == "N/A", NA, bmi))) |>
+  mutate(smoking_status = if_else(smoking_status == "Unknown", NA, smoking_status)) |>
+  mutate(smoking_status = fct_drop(smoking_status)) |> 
+  # Редактирование названий переменных
+  rename_all(\(x)str_to_title(x)) |> 
+  rename_all(\(x) str_replace_all(x, "_", " ")) |> 
+  #сортировка по возрасту по убыванию
+  arrange(desc(Age))
+
+# работа с пропущенными значениями в данных
+df |>
+  select(where(\(x)sum(is.na(x))/length(x)>0.2)) |> 
+  colnames()
+# В переменной smoking_status более 20% пропущенных значений
+sum(is.na(df$`Smoking status`))/nrow(df)
+
+cleaned_data <- df |> 
+  select(where(\(x)sum(is.na(x))/length(x)<=0.2))
+
+# работа с выбросами
+
+find_outliers <- function(data, column) {
+  data  |> 
+    filter(if_any({{ column }}, \(x) x > mean(x, na.rm = TRUE) + 3 * sd(x, na.rm = TRUE) | x < mean(x, na.rm = TRUE) - 3 * sd(x, na.rm = TRUE)))
+}
+
+outliers <- cleaned_data |> 
+  find_outliers(where(is.numeric) & !Id)
+
+write_csv(outliers, "outliers.csv") #Ссохранение в файл outliers.csv субъектов, которые являются выбросами
+
+cleaned_data <- anti_join(cleaned_data, outliers, by = "Id")
+nrow(cleaned_data)
+
+summary(cleaned_data)
+#Также мы видим одного человека, у которого указан пол Other, чтобы не было градации, состоящей из одного значения - удалим пациента
+
+cleaned_data <- cleaned_data |> 
+  filter(!Gender == "Other") |> 
+  mutate(Gender = fct_drop(Gender))
+
+```
+
+# Сколько осталось переменных?
+
+```{r}
+cleaned_data |> 
+  ncol()
+
+```
+
+# Сколько осталось случаев?
+
+```{r}
+cleaned_data |> 
+  nrow()
+
+```
+
+# Есть ли в данных идентичные строки?
+
+```{r}
+# Посмотрим сначала, есть ли пациенты с одинаковым id в базе, если да, то тогда уже будем разибаться с ними подробнее (дубли, повторные визиты)
+if (nrow(distinct(cleaned_data, Id) == nrow(cleaned_data))) {
+  print("Дубликатов не обнаружено")
+} else {
+  print("Обнаружены дубликаты")
+}
+```
+
+# Сколько всего переменных с пропущенными значениями в данных и сколько пропущенных точек в каждой такой переменной?
+
+```{r}
+# Количество переменных с пропущенными значениями:
+cleaned_data |>
+  select(where(\(x)sum(is.na(x))/length(x)>0)) |> 
+  ncol()
+
+# Количество пропущенных значений в каждой такой переменной:
+cleaned_data |> 
+  select(where(\(x)sum(is.na(x))/length(x)>0)) |>
+  summarise(across(everything(), \(x)sum(is.na(x)), .names = "count_{.col}")) |> 
+  pivot_longer(cols = everything(), names_to = "variable", values_to = "count")
+
+```
+
+# Описательные статистики
+
+## Количественные переменные
+
+1) Рассчитайте для всех количественных переменных для каждой группы (stroke):
+
+1.1) Количество значений;
+
+1.2) Количество пропущенных значений;
+
+1.3) Среднее;
+
+1.4) Медиану;
+
+1.5) Стандартное отклонение;
+
+1.6) 25% квантиль и 75% квантиль;
+
+1.7) Интерквартильный размах;
+
+1.8) Минимум;
+
+1.9) Максимум;
+
+1.10) 95% ДИ для среднего - задание со звёздочкой.
+
+```{r}
+statistics_num <- list(
+  `Количество значений` = \(x) length(x) |> as.character(),
+  `Количество пропущенных значений` = \(x) sum(is.na(x)) |> as.character(),
+  `Среднее значение` = \(x) mean(x, na.rm = TRUE) |> round(2) |> as.character(),
+  `Медиана` = \(x) median(x, na.rm = TRUE) |> round(2) |> as.character(),
+  `Стандартное отклонение` = \(x) sd(x, na.rm = TRUE) |> round(2) |> as.character(),
+  `Q1 - Q3` = \(x) paste0(quantile(x, 0.25, na.rm = TRUE) |> round(2), " - ", quantile(x, 0.75, na.rm = TRUE) |> round(2)),
+  `Интерквартильный размах` = \(x) (quantile(x, 0.75, na.rm = TRUE) - quantile(x, 0.25, na.rm = TRUE)) |> round(2) |> as.character(), 
+  `Мин. - макс.` = \(x) paste0(min(x, na.rm = TRUE) |> round(2), " - ", max(x, na.rm = TRUE) |> round(2)),
+  `95% ДИ для среднего` = \(x) paste0(round(mean(x, na.rm = TRUE) - qt(0.975, n()-1) * sd(x, na.rm = TRUE)/sqrt(n()),2), " - ", round(mean(x, na.rm = TRUE) + qt(0.975, n()-1) * sd(x, na.rm = TRUE)/sqrt(n()),2))
+)
+
+cleaned_data |> 
+  select(`Stroke`, where(is.numeric)  & !Id) |>
+  group_by(`Stroke`) |>
+  summarise(across(where(is.numeric), statistics_num )) |>
+  pivot_longer(!`Stroke`) |>
+  pivot_wider(names_from = `Stroke`, values_from = value) |> 
+  separate(name, into = c("Переменная", "Статистика"), sep = "_") |> 
+  flextable() |> 
+  theme_vanilla() |> 
+  add_header_row(values = c(" ", "Stroke"), colwidths = c(2,2)) |> 
+  merge_v("Переменная") |> 
+  align(align = "center", part = "all") |>
+  set_table_properties(width = 1, layout = "autofit")
+```
+
+## Категориальные переменные
+
+1) Рассчитайте для всех категориальных переменных для каждой группы (stroke):
+
+1.1) Абсолютное количество;
+
+1.2) Относительное количество внутри группы;
+
+1.3) 95% ДИ для доли внутри группы - задание со звёздочкой.
+
+```{r}
+statistics_cat <- function(var){
+  label <- rlang::englue("{{var}}")
+  
+  cleaned_data |> 
+  select(`Stroke`, {{var}}) |>
+  count(`Stroke`, {{var}}) |> 
+  group_by(`Stroke`) |>
+  mutate(`% по группе` = percent((n / sum(n)), 1)) |> 
+  ungroup() |> 
+  mutate(n = as.character(n)) |> 
+  pivot_longer(!c(`Stroke`, {{var}})) |> 
+  pivot_wider(names_from = `Stroke`, values_from = value) |> 
+  mutate(`Переменная` = label) |> 
+  relocate(`Переменная`, .before = 1) |> 
+  rename("Статистика" =  name) |> 
+  rename("Категория" = {{var}}) 
+}
+
+
+names_new <- cleaned_data |>  select(where(is.factor)& !Stroke) |>names()
+
+data_cat <- map_dfr(.x = vars(Gender, Hypertension, `Heart disease`, `Ever married`, `Work type`, `Residence type`), .f = statistics_cat)
+
+data_cat |> 
+  flextable() |> 
+  theme_vanilla() |> 
+  add_header_row(values = c(" ", "Stroke"), colwidths = c(3,2)) |>
+  merge_v(c("Переменная", "Категория")) |> 
+  align(align = "center", part = "all") |>
+  set_table_properties(width = 1, layout = "autofit")
+
+```
+
+# Визуализация
+
+## Количественные переменные
+
+1) Для каждой количественной переменной сделайте боксплоты по группам. Расположите их либо на отдельных рисунках, либо на одном, но читаемо;
+
+2) Наложите на боксплоты beeplots - задание со звёздочкой.
+
+3) Раскрасьте боксплоты с помощью библиотеки RColorBrewer.
+
+```{r}
+
+library(RColorBrewer)
+#display.brewer.all(colorblindFriendly = TRUE)
+
+
+graph_num <- function(num_var){
+
+  ggplot(data = cleaned_data, aes(x = Stroke, y = {{num_var}})) +
+  geom_boxplot(aes(fill = Stroke)) +
+  ggbeeswarm::geom_beeswarm(color = "Black", size = 0.1, alpha = 0.2) +
+  labs(title = rlang::englue("{{num_var}}")) +
+  scale_fill_brewer(aes(x = Stroke, y = {{num_var}}, fill = Stroke), palette="Set2") +
+  theme_bw()
+}
+
+
+graph_num_list <- map(.x = vars(Age, `Avg glucose level`, Bmi), .f = graph_num)
+
+graph_num_list
+
+```
+
+## Категориальные переменные
+
+1) Сделайте подходящие визуализации категориальных переменных. Обоснуйте, почему выбрали именно этот тип.
+
+```{r}
+#Для визуализации распределения частот номинальных переменных хорошо подходит гистограмма частот(барплот), построим ее.
+
+graph_cat <- function(cat_var){
+
+  ggplot(data = cleaned_data, aes(x = {{cat_var}}, fill = Stroke)) +
+  geom_bar(position = "dodge") +
+  labs(title = rlang::englue("{{cat_var}}")) +
+  theme_bw()
+
+}
+
+
+graph_cat_list <- map(.x = vars(Gender, Hypertension, `Heart disease`, `Ever married`, `Work type`, `Residence type`), .f = graph_cat)
+
+graph_cat_list
+
+```
+
+
+# Статистические оценки
+
+## Проверка на нормальность
+
+1) Оцените каждую переменную на соответствие нормальному распределению с помощью теста Шапиро-Уилка. Какие из переменных являются нормальными и как как вы это поняли?
+
+```{r}
+
+shapiro_test <- function(x) {
+  shapiro.test(x) |>
+    tidy() |>
+    select(method, statistic, `p value` = p.value)
+}
+
+# Применение теста Шапиро-Уилка ко всем количественным переменным и объединение результатов в таблицу
+cleaned_data  |>
+  group_by(Stroke) |> 
+  select(where(is.numeric)  & !Id) |>
+  pivot_longer(everything() & !Stroke) |>
+  group_by(Stroke, name) |>
+  summarise(shapiro_results = list(shapiro_test(value))) |>
+  arrange(name) |> 
+  unnest(shapiro_results)
+# По результатам теста распределения всех количественных переменных по переменной Stroke отличаются от нормального(р<0.001)
+```
+
+2) Постройте для каждой количественной переменной QQ-плот. Отличаются ли выводы от теста Шапиро-Уилка? Какой метод вы бы предпочли и почему?
+
+```{r}
+cleaned_data |> 
+  group_by(Stroke) |> 
+  select( where(is.numeric)  & !Id) |> 
+  pivot_longer(everything()& !Stroke) |> 
+  ggplot(aes(sample = value, colour = Stroke)) +
+  stat_qq() +
+  stat_qq_line() +
+  facet_wrap(~name) +
+  theme_bw()
+# При построении графиков QQ-plot мы видим, что для переменной Bmi по градации Yes(Stroke) точки лежат близко к прямой линии, что указывает на нормальность распределения данных, для других переменных этого не наблюдается.
+# Выводы по результатам построения графика QQ-плот и теста Шапиро-Уилка схожи. Я бы предпочла тест Шапиро-Уилка, т к он позволяет формально оценить, соответствуют ли данные нормальному распределению на основе p-value
+```
+
+3) Ниже напишите, какие ещё методы проверки на нормальность вы знаете и какие у них есть ограничения.
+
+**- Анализ моды, медианы, среднего значения, эксцесса, асимметрии.**
+
+**- К графическим методам также относят построение гистограммы -  график распределения данных с наложением кривой нормального распределения для визуальной оценки, анализ ящичковой диаграммы. Ограничение - визуальная оценка субъективна**
+
+**- Тест Колмогорова-Смирнова. Ограничение - выборка должная быть достаточно большой **
+
+
+
+## Сравнение групп
+
+1) Сравните группы (переменная **stroke**) по каждой переменной (как количественной, так и категориальной). Для каждой переменной выберите нужный критерий и кратко обоснуйте его выбор в комментариях.
+
+```{r}
+# Применение теста Манна-Уитни для каждой количественной переменной по stroke - выборки независимы, распределение данных на основании теста Шапиро-Уилка отличается от нормального.
+
+wilcox_test <- function(x,y) {
+  wilcox.test(x~y) |>
+    tidy() |>
+    select(method, statistic, `p value` = p.value)
+}
+
+cleaned_data  |>
+  group_by(Stroke) |> 
+  select(where(is.numeric) & !Id, Stroke) |>
+  pivot_longer(everything() & !Stroke) |>
+  group_by(name) |>
+  summarise(wilcox_results = list(wilcox_test(value,Stroke))) |>
+  unnest(wilcox_results) |> 
+  flextable() |> 
+  colformat_double(digits = 3) |> 
+  theme_vanilla() |> 
+  align(align = "center", part = "all") |>
+  set_table_properties(width = 1, layout = "autofit")
+
+# Применение хи-квадрат критерия для каждой категориальной переменной
+
+# По переменной Work type наблюдается разреженная таблица сопряженности, объединим 2 редко встречающиеся градации в одну 
+cleaned_data <- cleaned_data |>
+  mutate(`Work type` = recode(`Work type`, "children" = "children_never_worked", "Never_worked" = "children_never_worked"))
+
+chisq_test <- function(x,y) {
+  chisq.test(x,y) |>
+    tidy() |>
+    select(method, statistic, `p value` = p.value)
+}
+
+cleaned_data  |>
+  group_by(Stroke) |> 
+  select(where(is.factor)) |>
+  pivot_longer(everything() & !Stroke) |>
+  group_by(name) |>
+  summarise(chisq_results = list(chisq_test(value, Stroke))) |>
+  unnest(chisq_results) |> 
+  flextable() |> 
+  colformat_double(digits = 3) |> 
+  theme_vanilla() |> 
+  align(align = "center", part = "all") |>
+  set_table_properties(width = 1, layout = "autofit")
+
+```
+
+# Далее идут **необязательные** дополнительные задания, которые могут принести вам дополнительные баллы в том числе в случае ошибок в предыдущих
+
+## Корреляционный анализ
+
+1) Создайте корреляционную матрицу с визуализацией и поправкой на множественные сравнения. Объясните, когда лучше использовать корреляционные матрицы и в чём минусы и плюсы корреляционных исследований.
+
+**Корреляционные матрицы помогают быстро оценить степень взаимосвязи между парами переменных, направление связи. Важно смотреть корреляционные матрицы при построении моделей для исключения мультиколлинеарности.**
+
+**Из минусов можно выделить то, что с помощью такой корреляции мы можем оценить только линейные связи между переменными. Также мы не можем оценить причинно-следственные связи.**
+
+```{r}
+
+# Создание корреляционной матрицы для количественных переменных.
+cleaned_data_num <- cleaned_data |>
+              select( where(is.numeric) & !Id)
+
+psych::corr.test(cleaned_data_num,
+                 adjust = "holm")
+
+# Визуализация
+ggcorrplot(cor(cleaned_data_num|>
+              drop_na()))
+
+```
+
+## Моделирование
+
+1) Постройте регрессионную модель для переменной **stroke**. Опишите процесс построения
+
+```{r}
+
+
+
+```
+
+
+
+

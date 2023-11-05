@@ -1,0 +1,236 @@
+---
+2title: HW_1
+output:
+  html_document:
+    df_print: paged
+date: "`r Sys.Date()`"
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, warning = FALSE, message = FALSE, error = FALSE, include=FALSE}
+
+# Настройки для отображения графиков в документе
+#knitr::opts_chunk$set(fig.align = 'center', out.width='80%', dpi = 300)
+
+library(tidyverse)
+library(ggpubr)
+
+# Задать тему ggplot для всех графиков документа
+
+
+theme_params <- function(...) {
+  theme_bw() +
+  theme(plot.title = element_text(size = 14, hjust = 0.5),
+          axis.title = element_text(face = 'bold'))}
+
+```
+
+# **Задание 1. Загрузить данные**
+```{r}
+insurance <- read_csv("insurance_cost.csv")
+head(insurance)
+```
+
+```{r}
+summary(insurance)
+str(insurance)
+```
+
+# **Задание 2. Построить гистограммы нумерических переменных**
+
+```{r}
+graph_num <- function(num_var){
+
+  ggplot(insurance) +
+  geom_histogram(aes(x = {{num_var}}), alpha = 0.9, bins = 20) +
+  labs(title = rlang::englue("A histogram of {{num_var}}")) +
+  theme_params()
+
+}
+
+insurance |> 
+  select(where(is.numeric)) |> 
+  colnames()
+
+graph_num_list <- map(.x = vars(age, bmi, children, charges), .f = graph_num)
+
+graph_num_list
+```
+
+
+# **Задание 3. Построить график плотности по колонке charges**
+
+```{r}
+charges_mean <- round(mean(insurance$charges),1)
+charges_median <- round(median(insurance$charges),1)
+
+gd_charges <- ggplot(insurance) +
+  geom_density(aes(x = charges)) +
+  ggtitle("Распределение страховой суммы") + 
+  labs(x = "Charges", y = "Density") +
+  geom_vline(aes (xintercept = charges_mean), color = '#8B0000') +
+  annotate("text", x= charges_mean+5000, y =  0.00004, label=paste0("Mean=", charges_mean), color = "#8B0000") +
+  geom_vline(aes (xintercept = charges_median), color = '#191970') +
+  annotate("text", x= charges_median-1000, y =  0.00003, label=paste0("Median=", charges_median), color = "#191970") +
+  theme_params()
+
+gd_charges
+```
+
+# **Задание 4.  Построить графики box_plot по отношению переменных charges и (1) sex (2) smoker (3)region**
+
+```{r}
+bp_sex <- ggplot(insurance) +
+  geom_boxplot(aes(x = sex, y = charges)) +
+  labs(x = "Sex", y = "Charges") +
+  theme_params() +
+  theme(axis.text.x = element_text(angle= 90 , vjust= 0.5 , hjust= 1 )) 
+bp_sex
+
+bp_smoker <- ggplot(insurance) +
+  geom_boxplot(aes(x = smoker, y = charges)) +
+  labs(x = "Smoker", y = "Charges") +
+  theme_params() +
+  theme(axis.text.x = element_text(angle= 90 , vjust= 0.5 , hjust= 1 )) 
+bp_smoker
+
+bp_region <- ggplot(insurance) +
+  geom_boxplot(aes(x = region, y = charges)) +
+  labs(x = "Region", y = "Charges") + 
+  theme_params() +
+  theme(axis.text.x = element_text(angle= 90 , vjust= 0.5 , hjust= 1 )) 
+bp_region
+```
+
+# **Задание 5. Объединить графики из заданий 3 и 4 по заданному условию**
+
+```{r out.width='100%'}
+bp <- ggarrange(bp_sex, bp_smoker, bp_region, ncol = 3, nrow = 1)
+combine_plots <- ggarrange(gd_charges, bp,
+                          ncol = 1, nrow = 2) |> 
+annotate_figure(top = text_grob("Графики распределения страховой суммы\n и ее взаимосвязи с полом, статусом курения и регионом", face = "bold"))
+combine_plots
+```
+
+# **Задание 6. Сделать фасет графика из задания 3 по колонке region**
+
+```{r out.width='100%'}
+gd_charges + facet_wrap(.~region)
+```
+
+# **Задание 7. scatter plot отношения переменных age и charges**
+
+```{r}
+scatterplot <- ggplot(insurance, aes(x = age, y = charges)) + 
+  geom_point() +
+  ggtitle("Зависимость страховой суммы от возраста клиентов") +
+  labs(x = "Age", y = "Charges") +
+  theme_params() +
+  theme(axis.text.x = element_text(size = 14), axis.text.y = element_text(size = 14))
+scatterplot
+```
+
+# **Задание 8. Добавить линию тренда для предыдущего графика**
+
+```{r}
+scatterplot +
+  geom_smooth(method = lm, se = TRUE)
+```
+
+# **Задание 9. Сделать разбивку предыдущего графика по колонке smokers**
+
+```{r}
+ggplot(insurance, aes(x = age, y = charges, color = smoker, fill = smoker, group = smoker)) + 
+  geom_point() +
+  geom_smooth(method = lm, se = TRUE) +
+  ggtitle("Зависимость страховой суммы от возраста клиентов") +
+  labs(x = "Age", y = "Charges") +
+  theme_params() +
+  theme(axis.text.x = element_text(size = 14), axis.text.y = element_text(size = 14))
+```
+
+# **Задание 10. Сделайте график из заданий 7-9, но вместо переменной age использовать переменную bmi**
+
+```{r}
+ggplot(insurance, aes(x = bmi, y = charges, color = smoker, fill = smoker, group = smoker)) + 
+  geom_point() +
+  geom_smooth(method = lm, se = TRUE) +
+  ggtitle("Зависимость страховой суммы от ИМТ клиентов") +
+  labs(x = "Age", y = "Charges") +
+  theme_params() +
+  theme(axis.text.x = element_text(size = 14), axis.text.y = element_text(size = 14))
+```
+
+# **Задание 11**
+Посмотреть на соотношение клиентов с нормальным и избыточным ИМТ среди мужчин и женщин по юго-западному региону. Для визуализации распределения частот номинальных переменных хорошо подходит гистограмма частот(барплот)
+
+```{r}
+insurance |> 
+  filter(region == "southwest") |> 
+  mutate(bmi_group = case_when(bmi < 25 ~ "normal weight",
+                               bmi >= 25  ~ "overweight and obese")) |> 
+  ggplot(aes(x = bmi_group, fill = sex)) +
+  geom_bar(position = "dodge") +
+  ggtitle("Распределение клиентов по полу и ИМТ в юго-западном регионе") +
+  labs(x = "Bmi", y = "Count") +
+  theme_params()
+```
+
+Из графика видно, что в юго-западном регионе преобладают клиенты с повышенным ИМТ, выраженных различий по количеству мужчин и женщин в двух анализируемых группах ИМТ не выявлено,
+
+# **Задание 12** 
+
+Есть ли различия страховых выплат в зависимости от количества детей у клиентов страховой компании. Так как количество детей больше трех встречается редко, объединим клиентов с 3,4 и 5 детьми в одну категорию. Для визуализации распределения количественной переменной по группам построим ящичковую диаграмму
+
+```{r}
+insurance  |> 
+  mutate(children_combine = recode(factor(if_else(children >=3, 3, children)),
+        "0" = "0",
+        "1" = "1",
+        "2" = "2",
+        "3" = ">=3")) |> 
+  filter(children_combine != 0) |> 
+  ggplot(aes(x = factor(children_combine), y = charges)) +
+  geom_boxplot() +
+  ggtitle("Зависимость страховой суммы от количества детей у клиента") +
+  labs(x = "Сhildren", y = "Charges") +
+  theme_params()
+```
+
+Уровень выплат практически одинаковый у клиентов с разным количеством детей.
+
+# **Задание 13** 
+
+Посмотреть зависимость страховых выплат у мужчин в зависимости от статуса курения. 
+```{r}
+insurance  |>  
+  filter(sex == "male") |> 
+  ggplot(aes(x = smoker, y = charges)) +
+  geom_boxplot() +
+  ggtitle("Зависимость страховой суммы от статуса курения у мужчин") +
+  labs(x = "Smoker", y = "Charges")+
+  theme_params()
+```
+
+Для курящих мужчин сумма страховых выплат выше, чем для некурящих
+
+# **Задание 14. Приблизительно повторить график**
+
+```{r out.width='100%'}
+insurance_by_age <- insurance |> 
+  filter(age >= 21) |> 
+  mutate(age_group = case_when(age < 35 ~ "age: 21-34",
+                               age >= 35 & age < 50 ~ "age: 35-49",
+                               age >= 50 ~ "age: 50+")) 
+
+
+ggplot(insurance_by_age, aes(x = bmi, y = log(charges), color = age_group)) +
+  facet_wrap(~age_group) +
+  geom_point(fill = "#6A5ACD", color = "#6A5ACD", alpha = 0.6) +
+  geom_smooth(method = lm) +
+  ggtitle("Отношение индекса массы тела к логарифму трат по возрастным группам") +
+  theme_minimal() +
+  theme(legend.position = "bottom", plot.title = element_text(hjust = 0.5))
+```
+

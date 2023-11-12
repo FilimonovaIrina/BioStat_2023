@@ -1,0 +1,200 @@
+---
+title: "Домашнее задание по специфике медицинских данных"
+output: word_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, error = FALSE)
+
+library(tidyverse)
+library(readxl)
+library(rstatix)
+library(pROC)
+library(gtsummary)
+library(flextable)
+```
+
+```{r}
+#загрузка данных
+trauma <- read_excel("trauma.xlsx")
+trauma <- trauma |> 
+  select(-1)
+#head(trauma)
+#str(trauma)
+#summary(trauma)
+```
+# **Задание 1**
+
+```{r}
+#Преобразуем необходимые переменные
+trauma <- trauma |> 
+  mutate(Height = (as.numeric(str_remove_all(trauma$Height, "\"")) * 2.54 / 100) |> round(2),
+         Weight = (Weight / 2.2) |> round(2),
+         Sex = ifelse(Sex == "Male", "Мужской", "Женский"),
+         Hb = if_else(Hb == 0, NA, Hb))# заменим нулевые значения по уровню гемоглобина  на NA
+```
+
+Выведем сводную статистику по переменным
+```{r}
+trauma |>  
+  select(!c(id, Name)) |> 
+  tbl_summary(
+    type = all_continuous() ~ "continuous2",
+    statistic = all_continuous() ~ c(
+      "{mean} ({sd})",
+      "{median} ({p25}, {p75})",
+      "{min}, {max}"
+    ),
+    missing = "no",
+    label = c("Sex" = "Пол",
+              "Age" = "Возраст, г",
+              "Height" = "Рост, м",
+              "Weight" = "Вес, кг",
+              "SBP" = "САД, мм.рт.ст.",
+              "DBP" = "ДАД, мм.рт.ст.",
+              "FOUR" = "Баллы по шкале комы FOUR",
+              "GSC" = "Баллы по шкале комы Глазго",
+              "Hb" = "Hb, г/дл",
+              "Death" = "Смерть"),
+    digits = c(all_continuous() ~ c(1, 1),
+               all_categorical() ~ c(0, 1))
+  ) |> 
+    bold_labels()
+```
+
+
+```{r}
+#Сниженный уровень гемоглобина
+
+trauma <- trauma |> 
+  mutate( Hb_code = (case_when(
+    Hb < 12 & Sex == "Женский" ~ 1,  # сниженный уровень для женщин
+    Hb < 13.5 & Sex == "Мужской" ~ 1,  # сниженный уровень для мужчин
+    Hb >= 12 & Hb <= 14 & Sex == "Женский" ~ 2,  # нормальный уровень для женщин
+    Hb >= 13.5 & Hb <= 16 & Sex == "Мужской" ~ 2,  # нормальный уровень для мужчин
+    Hb > 14 & Sex == "Женский" ~ 3,  # повышенный уровень для женщин
+    Hb > 16 & Sex == "Мужской" ~ 3  # повышенный уровень для мужчин
+  )) |> as.factor())
+
+trauma  |>  
+  filter(Hb_code == 1)  |> 
+  summarise('Количество' = n())  |>  
+  mutate('% случаев' = (Количество / nrow(trauma) *100) |> round(1)) |>
+  flextable() |> 
+  set_table_properties(width = 0.5, layout = "autofit") |> 
+  add_header_row(values = 'Сниженный уровень гемоглобина  в выборке', colwidths = 2)
+```
+
+Сниженный уровень гемоглобина выявлен у 458 пациентов, что составило 44,7% от общего количества пациентов (n = 1024)
+
+# **Задание 2**
+
+```{r}
+# Создадим переменную ИМТ
+trauma <- trauma |> 
+  mutate(BMI = Weight/(Height^2)|> round(1))
+
+```
+
+```{r}
+trauma |> 
+  filter(BMI > 30) |> 
+  summarise('Количество' = n())  |> 
+  mutate('% случаев' = (Количество / nrow(trauma) *100) |> round(1)) |> 
+  flextable() |> 
+  set_table_properties(width = 0.5, layout = "autofit") |> 
+  add_header_row(values = 'Индекс массы тела > 30 кг/м2 в выборке', colwidths = 2)
+
+
+```
+
+Средний уровень ИМТ  M (SD) у пациентов, включенных в исследование `r round(mean(trauma$BMI), 1)`(`r round(sd(trauma$BMI), 1)`) кг/м2. Ожирение выявлено в 7.2% случаев от общего количества пациентов (n = 1024)
+
+# **Задание 3**
+
+Построим ROC-кривую для предсказания летального исхода в течение 24 часов по уровню гемоглобина.
+
+```{r}
+roc_hb <- roc(Death ~ Hb, data = trauma, ci = TRUE)
+
+roc_hb |> 
+    ggroc() + 
+    geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), color="red", linetype="dashed") + 
+    theme_bw() +
+    labs(title = "ROC curve (Death - Hb)") +
+    theme(axis.title = element_text(face = "bold"),
+        plot.title = element_text(face = "bold", hjust = 0.5))
+
+```
+
+Мы видим, что форма ROC-кривой приближается к диагональной линии, то есть уровень гемоглобина не является сильным предиктором летального исхода. 
+
+# **Задание 4**
+
+Площадь под построенной ROC-кривой 
+
+```{r}
+roc_hb$auc
+```
+
+95% двусторонний ДИ для площади под ROC-кривой 
+
+```{r}
+roc_hb$ci
+```
+
+# **Задание 5**
+
+ROC-анализ для предсказания летального исхода в течение 24 часов по шкале комы Глазго.
+
+```{r}
+roc_gsc <- roc(Death ~ GSC, data = trauma, ci = TRUE)
+
+roc_gsc |> 
+    ggroc() + 
+   geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), color="red", linetype="dashed") + 
+    theme_bw() +
+    labs(title = "ROC curve (Death - GSC)") +
+    theme(axis.title = element_text(face = "bold"),
+        plot.title = element_text(face = "bold", hjust = 0.5))
+
+```
+
+Ниже в таблице представлены оптимальное пороговое значение для предсказания летального исхода по шкале комы Глазго и соответствующие значения чувствительности и специфичности
+```{r}
+roc_gsc_best <- roc_gsc  |>  coords(x = "best", best.method = "closest.topleft") 
+
+roc_gsc_best |> 
+  mutate(specificity = round(specificity, 2),
+        sensitivity = round(sensitivity, 2)) |> 
+   rename(`Пороговое значение` = threshold,
+          Чувствительность = sensitivity,
+          Специфичность = specificity) |> 
+  flextable() |> 
+  set_table_properties(width = 0.5, layout = "autofit")
+
+```
+Для предсказания летального исхода в течение 24 часов оптимальным является пороговое значение 7,5 баллов по шкале комы Глазго с чувствительностью 86% и специфичностью 81%.
+
+# **Задание 6**
+
+ROC-анализ для всех количественных переменных в датасете
+
+```{r}
+trauma |> 
+  select(Death, where(is.numeric) & !id) |> 
+  pivot_longer(cols = !Death) |> 
+  rename("Переменная" = name) |> 
+  group_by(Переменная) |> 
+  summarise(AUC = roc(Death, value, ci = TRUE)$ci[2] |> round(3),
+            "Нижняя граница 95% ДИ" = roc(Death, value, ci = T)$ci[1] %>% round(3),
+            "Верхняя граница 95% ДИ" = roc(Death, value, ci = T)$ci[3] %>% round(3))  |> 
+  arrange(desc(AUC))  |> 
+  flextable() |> 
+  set_table_properties(width = 0.5, layout = "autofit")
+```
+
+Наибольшей площадью под ROC-кривой обладает оценка по шкале комы FOUR. Это означает, что такая шкала является наиболее важным предиктором для определения вероятности смерти пациента. Это обусловлено тем, что она и была разработана для анализа тяжести церебрального повреждения и прогноза исхода.
+
+Минимальную площадь под ROC-кривой имеет рост пациента. Такой показатель является неспецифическим для прогноза летальности.
